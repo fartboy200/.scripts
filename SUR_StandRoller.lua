@@ -1607,31 +1607,19 @@ task.spawn(function()
         workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
     end)
 
-    -- Find the Play button anywhere inside MenuGUI
-    local function findPlayButton(parent)
-        for _, v in ipairs(parent:GetDescendants()) do
-            if (v:IsA("TextButton") or v:IsA("ImageButton")) then
-                local n = v.Name:lower()
-                local t = (v:IsA("TextButton") and v.Text or ""):lower()
-                if n == "play" or t == "play" or n:find("play") or t:find("play") then
-                    return v
-                end
-            end
-        end
-        return nil
+    -- Fire PressedPlay every 2s until it succeeds, then destroy the GUI ourselves
+    local pressed = false
+    local deadline = tick() + 30
+    while not pressed and tick() < deadline do
+        pcall(function()
+            game:GetService("ReplicatedStorage").Events.PressedPlay:FireServer()
+            pressed = true
+        end)
+        if not pressed then task.wait(2) end
     end
 
-    -- Keep trying to click until the button works or MenuGUI disappears
-    while menuGui and menuGui.Parent do
-        local btn = findPlayButton(menuGui)
-        if btn then
-            pcall(function() btn.MouseButton1Click:Fire() end)
-        end
-        task.wait(1)
-        -- If MenuGUI is gone after click, we're done
-        if not menuGui.Parent then break end
-    end
-
+    -- Force the GUI off regardless of whether PressedPlay worked
+    pcall(function() menuGui:Destroy() end)
     cleanupMenu()
     checkAutoRestart()
 end)
