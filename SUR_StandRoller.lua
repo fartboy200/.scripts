@@ -1465,15 +1465,15 @@ pcall(function()
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
         if spyActive and (method == "FireServer" or method == "InvokeServer") then
+            local args = {...}
             pcall(function()
                 if not (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then return end
-                local args = {...}
                 local parts = {}
                 for _, v in ipairs(args) do
                     table.insert(parts, tostring(v))
                 end
                 local argStr = #parts > 0 and table.concat(parts, ", ") or "no args"
-                notify("[Spy] " .. method, self.Name .. "\n(" .. argStr .. ")", 10)
+                print("[Spy] " .. method .. " | " .. self.Name .. " | " .. argStr)
             end)
         end
         return oldNamecall(self, ...)
@@ -1542,31 +1542,45 @@ pcall(function() SaveManager:LoadAutoloadConfig() end)
 scriptReady = true
 Fluent:Notify({Title = "SUR Stand Roller", Content = "Loaded!", Duration = 4})
 
--- Auto-restart roller if we rejoined while rolling
-pcall(function()
-    if isfile(AUTO_RESTART_FILE) then
-        local data = HttpService:JSONDecode(readfile(AUTO_RESTART_FILE))
-        pcall(function()
-            if delfile then delfile(AUTO_RESTART_FILE)
-            elseif deletefile then deletefile(AUTO_RESTART_FILE) end
+task.spawn(function()
+    while true do
+        local ok = pcall(function()
+            game:GetService("ReplicatedStorage").Events.PressedPlay:FireServer()
         end)
-        if type(data) == "table" and data.autoRestart then
-            notify("Auto-Restart", "Waiting for game to load...", 5)
-            task.spawn(function()
-                while true do
-                    local menuGui = lp.PlayerGui:FindFirstChild("MenuGUI")
-                    if menuGui then
-                        local playBtn = menuGui:FindFirstChild("Play")
-                        if playBtn then
-                            pcall(function() playBtn.MouseButton1Click:Fire() end)
-                            task.wait(2)
-                            Options.StartRoller:SetValue(true)
-                            break
-                        end
-                    end
-                    task.wait(2)
+        if ok then
+            pcall(function() lp.PlayerGui.MenuGUI:Destroy() end)
+            -- kill blur effects left behind by MenuGUI scripts
+            pcall(function()
+                for _, v in ipairs(game:GetService("Lighting"):GetChildren()) do
+                    if v:IsA("BlurEffect") then v.Enabled = false end
                 end
             end)
+            -- reset camera to character
+            pcall(function()
+                game:GetService("RunService").RenderStepped:Wait()
+                local cam = workspace.CurrentCamera
+                cam.CameraType = Enum.CameraType.Custom
+                local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+                if hum then cam.CameraSubject = hum end
+            end)
+            -- Auto-restart roller if we rejoined while rolling
+            pcall(function()
+                if isfile(AUTO_RESTART_FILE) then
+                    local data = HttpService:JSONDecode(readfile(AUTO_RESTART_FILE))
+                    pcall(function()
+                        if delfile then delfile(AUTO_RESTART_FILE)
+                        elseif deletefile then deletefile(AUTO_RESTART_FILE) end
+                    end)
+                    if type(data) == "table" and data.autoRestart then
+                        notify("Auto-Restart", "Roller resuming in 5 seconds...", 6)
+                        task.delay(5, function()
+                            Options.StartRoller:SetValue(true)
+                        end)
+                    end
+                end
+            end)
+            break
         end
+        task.wait(2)
     end
 end)
