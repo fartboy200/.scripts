@@ -1456,6 +1456,17 @@ MiscTab:AddButton({
     Callback = unloadScript,
 })
 
+MiscTab:AddDropdown("ThemePicker", {
+    Title   = "UI Theme",
+    Icon    = "palette",
+    Values  = {"Dark", "Light", "Aqua", "Amethyst", "Rose", "Mocha"},
+    Default = "Dark",
+})
+
+Options.ThemePicker:OnChanged(function()
+    Fluent:SetTheme(Options.ThemePicker.Value)
+end)
+
 -- ─── Remote Spy ──────────────────────────────────────────────────────────────
 
 local spyActive = false
@@ -1543,6 +1554,11 @@ scriptReady = true
 Fluent:Notify({Title = "SUR Stand Roller", Content = "Loaded!", Duration = 4})
 
 task.spawn(function()
+    -- Freeze the spinning menu camera immediately
+    pcall(function()
+        local cam = workspace.CurrentCamera
+        cam.CameraType = Enum.CameraType.Scriptable
+    end)
     while true do
         local ok = pcall(function()
             game:GetService("ReplicatedStorage").Events.PressedPlay:FireServer()
@@ -1572,8 +1588,8 @@ task.spawn(function()
                         elseif deletefile then deletefile(AUTO_RESTART_FILE) end
                     end)
                     if type(data) == "table" and data.autoRestart then
-                        notify("Auto-Restart", "Roller resuming in 5 seconds...", 6)
-                        task.delay(5, function()
+                        notify("Auto-Restart", "Roller resuming in 10 seconds...", 6)
+                        task.delay(10, function()
                             Options.StartRoller:SetValue(true)
                         end)
                     end
