@@ -1459,7 +1459,7 @@ MiscTab:AddButton({
 MiscTab:AddDropdown("ThemePicker", {
     Title   = "UI Theme",
     Icon    = "palette",
-    Values  = {"Dark", "Light", "Aqua", "Amethyst", "Rose", "Mocha", "Dracula", "Marine", "Midnight"},
+    Values  = {"Dark", "Light", "Aqua", "Amethyst", "Rose", "Mocha"},
     Default = "Dark",
 })
 
@@ -1594,25 +1594,45 @@ task.spawn(function()
         workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
     end)
 
-    -- If MenuGUI doesn't exist at all, just clean up camera/blur and move on
+    -- Wait up to 8s for MenuGUI to appear; if it never shows, just clean up and move on
     local menuGui = lp.PlayerGui:FindFirstChild("MenuGUI")
+    if not menuGui then
+        local deadline = tick() + 8
+        repeat task.wait(0.2) until lp.PlayerGui:FindFirstChild("MenuGUI") or tick() > deadline
+        menuGui = lp.PlayerGui:FindFirstChild("MenuGUI")
+    end
+
     if not menuGui then
         cleanupMenu()
         checkAutoRestart()
         return
     end
 
-    -- MenuGUI exists — keep firing PressedPlay until it works
-    while true do
-        local ok = pcall(function()
-            game:GetService("ReplicatedStorage").Events.PressedPlay:FireServer()
-        end)
-        if ok then
-            pcall(function() lp.PlayerGui.MenuGUI:Destroy() end)
-            cleanupMenu()
-            checkAutoRestart()
-            break
+    -- Find the Play button anywhere inside MenuGUI
+    local function findPlayButton(parent)
+        for _, v in ipairs(parent:GetDescendants()) do
+            if (v:IsA("TextButton") or v:IsA("ImageButton")) then
+                local n = v.Name:lower()
+                local t = (v:IsA("TextButton") and v.Text or ""):lower()
+                if n == "play" or t == "play" or n:find("play") or t:find("play") then
+                    return v
+                end
+            end
         end
-        task.wait(2)
+        return nil
     end
+
+    -- Keep trying to click until the button works or MenuGUI disappears
+    while menuGui and menuGui.Parent do
+        local btn = findPlayButton(menuGui)
+        if btn then
+            pcall(function() btn.MouseButton1Click:Fire() end)
+        end
+        task.wait(1)
+        -- If MenuGUI is gone after click, we're done
+        if not menuGui.Parent then break end
+    end
+
+    cleanupMenu()
+    checkAutoRestart()
 end)
