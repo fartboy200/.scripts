@@ -87,6 +87,7 @@ local useCustomDelay   = false -- when true, customAttriDelay overrides everythi
 local specificStands = {}   -- {name=internalID, attribs={...}} — empty attribs = any attrib
 local blacklistStands = {}  -- {name=internalID, attribs={...}} — always Rokaka'd
 local pingUserId     = ""   -- Discord user ID for @mentions in alert webhooks
+local scriptReady    = false
 
 local SPECIFIC_SAVE_FILE  = "SUR_SpecificStands.json"
 local BLACKLIST_SAVE_FILE = "SUR_Blacklist.json"
@@ -781,7 +782,9 @@ Options.StartRoller:OnChanged(function()
         startRolling()
     else
         stopRolling()
-        notify("Info", "Roller stopped after " .. rollCount .. " rolls.", 3)
+        if scriptReady then
+            notify("Info", "Roller stopped after " .. rollCount .. " rolls.", 3)
+        end
     end
 end)
 
@@ -1363,7 +1366,9 @@ WebhookTab:AddToggle("StandDebug", {
 
 Options.StandDebug:OnChanged(function()
     standDebug = Options.StandDebug.Value
-    notify("Webhook", "Stand debug " .. (standDebug and "enabled" or "disabled") .. ".", 3)
+    if scriptReady then
+        notify("Webhook", "Stand debug " .. (standDebug and "enabled" or "disabled") .. ".", 3)
+    end
 end)
 
 WebhookTab:AddToggle("DebugMode", {
@@ -1375,7 +1380,9 @@ WebhookTab:AddToggle("DebugMode", {
 
 Options.DebugMode:OnChanged(function()
     debugMode = Options.DebugMode.Value
-    notify("Webhook", "Full debug mode " .. (debugMode and "enabled" or "disabled") .. ".", 3)
+    if scriptReady then
+        notify("Webhook", "Full debug mode " .. (debugMode and "enabled" or "disabled") .. ".", 3)
+    end
 end)
 
 -- ─── Misc Tab ────────────────────────────────────────────────────────────────
@@ -1493,8 +1500,9 @@ end)
 -- ─── Done ─────────────────────────────────────────────────────────────────────
 
 Window:SelectTab(1)
-Fluent:Notify({Title = "SUR Stand Roller", Content = "Loaded!", Duration = 4})
 pcall(function() SaveManager:LoadAutoloadConfig() end)
+scriptReady = true
+Fluent:Notify({Title = "SUR Stand Roller", Content = "Loaded!", Duration = 4})
 
 -- Auto-restart roller if we rejoined while rolling
 pcall(function()
