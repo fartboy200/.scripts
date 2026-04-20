@@ -1513,14 +1513,21 @@ pcall(function()
             elseif deletefile then deletefile(AUTO_RESTART_FILE) end
         end)
         if type(data) == "table" and data.autoRestart then
-            notify("Auto-Restart", "Roller resuming in 45 seconds...", 10)
-            task.delay(45, function()
-                -- Click the play button to dismiss the main menu
-                pcall(function()
-                    lp.PlayerGui.MenuGUI.Play.MouseButton1Click:Fire()
-                end)
-                task.wait(1)
-                Options.StartRoller:SetValue(true)
+            notify("Auto-Restart", "Waiting for game to load...", 5)
+            task.spawn(function()
+                while true do
+                    local menuGui = lp.PlayerGui:FindFirstChild("MenuGUI")
+                    if menuGui then
+                        local playBtn = menuGui:FindFirstChild("Play")
+                        if playBtn then
+                            pcall(function() playBtn.MouseButton1Click:Fire() end)
+                            task.wait(2)
+                            Options.StartRoller:SetValue(true)
+                            break
+                        end
+                    end
+                    task.wait(2)
+                end
             end)
         end
     end
