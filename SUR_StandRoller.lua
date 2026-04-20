@@ -1459,7 +1459,7 @@ MiscTab:AddButton({
 MiscTab:AddDropdown("ThemePicker", {
     Title   = "UI Theme",
     Icon    = "palette",
-    Values  = {"Dark", "Light", "Aqua", "Amethyst", "Rose", "Mocha"},
+    Values  = {"Dark", "Light", "Aqua", "Amethyst", "Rose", "Mocha", "Dracula", "Marine", "Midnight"},
     Default = "Dark",
 })
 
@@ -1554,47 +1554,63 @@ scriptReady = true
 Fluent:Notify({Title = "SUR Stand Roller", Content = "Loaded!", Duration = 4})
 
 task.spawn(function()
+    local function cleanupMenu()
+        -- kill blur effects left behind by MenuGUI scripts
+        pcall(function()
+            for _, v in ipairs(game:GetService("Lighting"):GetChildren()) do
+                if v:IsA("BlurEffect") then v.Enabled = false end
+            end
+        end)
+        -- reset camera to character
+        pcall(function()
+            game:GetService("RunService").RenderStepped:Wait()
+            local cam = workspace.CurrentCamera
+            cam.CameraType = Enum.CameraType.Custom
+            local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
+            if hum then cam.CameraSubject = hum end
+        end)
+    end
+
+    local function checkAutoRestart()
+        pcall(function()
+            if isfile(AUTO_RESTART_FILE) then
+                local data = HttpService:JSONDecode(readfile(AUTO_RESTART_FILE))
+                pcall(function()
+                    if delfile then delfile(AUTO_RESTART_FILE)
+                    elseif deletefile then deletefile(AUTO_RESTART_FILE) end
+                end)
+                if type(data) == "table" and data.autoRestart then
+                    notify("Auto-Restart", "Roller resuming in 10 seconds...", 6)
+                    task.delay(10, function()
+                        Options.StartRoller:SetValue(true)
+                    end)
+                end
+            end
+        end)
+    end
+
     -- Freeze the spinning menu camera immediately
     pcall(function()
-        local cam = workspace.CurrentCamera
-        cam.CameraType = Enum.CameraType.Scriptable
+        workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
     end)
+
+    -- If MenuGUI doesn't exist at all, just clean up camera/blur and move on
+    local menuGui = lp.PlayerGui:FindFirstChild("MenuGUI")
+    if not menuGui then
+        cleanupMenu()
+        checkAutoRestart()
+        return
+    end
+
+    -- MenuGUI exists — keep firing PressedPlay until it works
     while true do
         local ok = pcall(function()
             game:GetService("ReplicatedStorage").Events.PressedPlay:FireServer()
         end)
         if ok then
             pcall(function() lp.PlayerGui.MenuGUI:Destroy() end)
-            -- kill blur effects left behind by MenuGUI scripts
-            pcall(function()
-                for _, v in ipairs(game:GetService("Lighting"):GetChildren()) do
-                    if v:IsA("BlurEffect") then v.Enabled = false end
-                end
-            end)
-            -- reset camera to character
-            pcall(function()
-                game:GetService("RunService").RenderStepped:Wait()
-                local cam = workspace.CurrentCamera
-                cam.CameraType = Enum.CameraType.Custom
-                local hum = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-                if hum then cam.CameraSubject = hum end
-            end)
-            -- Auto-restart roller if we rejoined while rolling
-            pcall(function()
-                if isfile(AUTO_RESTART_FILE) then
-                    local data = HttpService:JSONDecode(readfile(AUTO_RESTART_FILE))
-                    pcall(function()
-                        if delfile then delfile(AUTO_RESTART_FILE)
-                        elseif deletefile then deletefile(AUTO_RESTART_FILE) end
-                    end)
-                    if type(data) == "table" and data.autoRestart then
-                        notify("Auto-Restart", "Roller resuming in 10 seconds...", 6)
-                        task.delay(10, function()
-                            Options.StartRoller:SetValue(true)
-                        end)
-                    end
-                end
-            end)
+            cleanupMenu()
+            checkAutoRestart()
             break
         end
         task.wait(2)
