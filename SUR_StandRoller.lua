@@ -1456,6 +1456,41 @@ MiscTab:AddButton({
     Callback = unloadScript,
 })
 
+-- ─── Remote Spy ──────────────────────────────────────────────────────────────
+
+local spyActive = false
+
+pcall(function()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        if spyActive and (method == "FireServer" or method == "InvokeServer") then
+            local args = {...}
+            local parts = {}
+            for _, v in ipairs(args) do
+                table.insert(parts, tostring(v))
+            end
+            local argStr = #parts > 0 and table.concat(parts, ", ") or "no args"
+            notify("[Spy] " .. method, self:GetFullName() .. "\n(" .. argStr .. ")", 10)
+        end
+        return oldNamecall(self, ...)
+    end)
+end)
+
+MiscTab:AddToggle("RemoteSpy", {
+    Title       = "Remote Spy",
+    Description = "Logs all FireServer/InvokeServer calls as notifications",
+    Icon        = "radio",
+    Default     = false,
+})
+
+Options.RemoteSpy:OnChanged(function()
+    spyActive = Options.RemoteSpy.Value
+    if scriptReady then
+        notify("Remote Spy", spyActive and "Spy enabled — interact with the game to see remotes." or "Spy disabled.", 3)
+    end
+end)
+
 -- ─── Config Tab ───────────────────────────────────────────────────────────────
 
 pcall(function()
