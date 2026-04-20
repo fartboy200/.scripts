@@ -1602,9 +1602,11 @@ task.spawn(function()
         return
     end
 
-    -- Menu exists — freeze the spinning camera now that we know it's needed
+    -- Kill all LocalScripts inside MenuGUI to stop camera sway
     pcall(function()
-        workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+        for _, v in ipairs(menuGui:GetDescendants()) do
+            if v:IsA("LocalScript") then v.Disabled = true end
+        end
     end)
 
     -- Fire PressedPlay every 2s until it succeeds, then destroy the GUI ourselves
@@ -1620,6 +1622,8 @@ task.spawn(function()
 
     -- Force the GUI off regardless of whether PressedPlay worked
     pcall(function() menuGui:Destroy() end)
+    -- Re-enable the main in-game GUI that the menu hides
+    pcall(function() lp.PlayerGui.PlayerGUI.Enabled = true end)
     cleanupMenu()
     checkAutoRestart()
 end)
