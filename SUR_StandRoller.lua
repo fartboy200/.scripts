@@ -1602,11 +1602,11 @@ task.spawn(function()
         return
     end
 
-    -- Kill all LocalScripts inside MenuGUI to stop camera sway
-    pcall(function()
-        for _, v in ipairs(menuGui:GetDescendants()) do
-            if v:IsA("LocalScript") then v.Disabled = true end
-        end
+    -- Lock the camera every frame to fight whatever sway script is running
+    local lockedCF = workspace.CurrentCamera.CFrame
+    local camConn = RunService.RenderStepped:Connect(function()
+        workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+        workspace.CurrentCamera.CFrame = lockedCF
     end)
 
     -- Fire PressedPlay every 2s until it succeeds, then destroy the GUI ourselves
@@ -1620,9 +1620,9 @@ task.spawn(function()
         if not pressed then task.wait(2) end
     end
 
-    -- Force the GUI off regardless of whether PressedPlay worked
+    -- Stop fighting the camera, destroy menu, restore everything
+    camConn:Disconnect()
     pcall(function() menuGui:Destroy() end)
-    -- Re-enable the main in-game GUI that the menu hides
     pcall(function() lp.PlayerGui.PlayerGUI.Enabled = true end)
     cleanupMenu()
     checkAutoRestart()
