@@ -1459,7 +1459,7 @@ MiscTab:AddButton({
 MiscTab:AddDropdown("ThemePicker", {
     Title   = "UI Theme",
     Icon    = "palette",
-    Values  = {"Dark", "Light", "Aqua", "Amethyst", "Rose", "Mocha"},
+    Values  = {"Dark", "Light", "Aqua", "Amethyst", "Rose"},
     Default = "Dark",
 })
 
@@ -1589,12 +1589,7 @@ task.spawn(function()
         end)
     end
 
-    -- Freeze the spinning menu camera immediately
-    pcall(function()
-        workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
-    end)
-
-    -- Wait up to 8s for MenuGUI to appear; if it never shows, just clean up and move on
+    -- Wait up to 8s for MenuGUI to appear; if it never shows, just check auto-restart and exit
     local menuGui = lp.PlayerGui:FindFirstChild("MenuGUI")
     if not menuGui then
         local deadline = tick() + 8
@@ -1603,10 +1598,14 @@ task.spawn(function()
     end
 
     if not menuGui then
-        cleanupMenu()
         checkAutoRestart()
         return
     end
+
+    -- Menu exists — freeze the spinning camera now that we know it's needed
+    pcall(function()
+        workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+    end)
 
     -- Find the Play button anywhere inside MenuGUI
     local function findPlayButton(parent)
