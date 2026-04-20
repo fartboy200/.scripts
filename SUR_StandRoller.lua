@@ -26,6 +26,7 @@ local RollTab       = Window:AddTab({Title = "Roller",    Icon = "star"})
 local SpecificTab   = Window:AddTab({Title = "Specific",  Icon = "list"})
 local BlacklistTab  = Window:AddTab({Title = "Blacklist", Icon = "slash"})
 local WebhookTab    = Window:AddTab({Title = "Webhook",   Icon = "send"})
+local ShopTab       = Window:AddTab({Title = "Shop",      Icon = "shopping-cart"})
 local MiscTab       = Window:AddTab({Title = "Misc",      Icon = "settings"})
 local ConfigTab     = Window:AddTab({Title = "Configs",   Icon = "save"})
 
@@ -1505,6 +1506,118 @@ Options.RemoteSpy:OnChanged(function()
     end
 end)
 
+-- ─── Shop Tab ────────────────────────────────────────────────────────────────
+
+local SELLABLE_ITEMS = {"Charged Arrow", "Requiem Arrow"}
+
+local sellItem   = SELLABLE_ITEMS[1]
+local sellAmount = 1
+local sellAll    = false
+
+ShopTab:AddParagraph({
+    Title   = "Sell Items",
+    Content = "Sells items to the shop via SM_Event. Toggle 'Sell All' to ignore the amount and sell your entire stack.",
+})
+
+ShopTab:AddDropdown("SellItemPick", {
+    Title   = "Item to Sell",
+    Icon    = "package",
+    Values  = SELLABLE_ITEMS,
+    Default = SELLABLE_ITEMS[1],
+})
+
+Options.SellItemPick:OnChanged(function()
+    sellItem = Options.SellItemPick.Value
+end)
+
+ShopTab:AddInput("SellAmount", {
+    Title       = "Amount",
+    Default     = "1",
+    Placeholder = "e.g. 10",
+    Numeric     = true,
+    Callback    = function(v)
+        sellAmount = tonumber(v) or 1
+    end,
+})
+
+ShopTab:AddToggle("SellAll", {
+    Title   = "Sell All",
+    Icon    = "layers",
+    Default = false,
+})
+
+Options.SellAll:OnChanged(function()
+    sellAll = Options.SellAll.Value
+end)
+
+ShopTab:AddButton({
+    Title    = "Sell",
+    Icon     = "dollar-sign",
+    Callback = function()
+        local item = sellItem
+        local count = getItemCount(item)
+        if count == 0 then
+            notify("Shop", "You have no " .. item .. " to sell.", 4)
+            return
+        end
+        local amount = sellAll and count or math.min(sellAmount, count)
+        local ok, err = pcall(function()
+            game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Sell", item, amount)
+        end)
+        if ok then
+            notify("Shop", "Sold " .. amount .. "x " .. item, 4)
+        else
+            notify("Shop", "Sell failed: " .. tostring(err), 5)
+        end
+    end,
+})
+
+local BUYABLE_ITEMS = {"Rokakaka", "Stand Arrow", "Charged Arrow", "Requiem Arrow"}
+
+local buyItem   = BUYABLE_ITEMS[1]
+local buyAmount = 1
+
+ShopTab:AddParagraph({
+    Title   = "Buy Items",
+    Content = "Buys items from the shop via SM_Event.",
+})
+
+ShopTab:AddDropdown("BuyItemPick", {
+    Title   = "Item to Buy",
+    Icon    = "shopping-bag",
+    Values  = BUYABLE_ITEMS,
+    Default = BUYABLE_ITEMS[1],
+})
+
+Options.BuyItemPick:OnChanged(function()
+    buyItem = Options.BuyItemPick.Value
+end)
+
+ShopTab:AddInput("BuyAmount", {
+    Title       = "Amount",
+    Default     = "1",
+    Placeholder = "e.g. 10",
+    Numeric     = true,
+    Callback    = function(v)
+        buyAmount = tonumber(v) or 1
+    end,
+})
+
+ShopTab:AddButton({
+    Title    = "Buy",
+    Icon     = "plus-circle",
+    Callback = function()
+        local ok, err = pcall(function()
+            game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Buy", buyItem, buyAmount)
+        end)
+        if ok then
+            notify("Shop", "Bought " .. buyAmount .. "x " .. buyItem, 4)
+        else
+            notify("Shop", "Buy failed: " .. tostring(err), 5)
+        end
+    end,
+})
+
 -- ─── Config Tab ───────────────────────────────────────────────────────────────
 
 pcall(function()
@@ -1602,9 +1715,9 @@ task.spawn(function()
         return
     end
 
-    -- Lock the camera every frame to fight whatever sway script is running
+    -- Lock the camera every frame at Last priority (runs after game camera scripts)
     local lockedCF = workspace.CurrentCamera.CFrame
-    local camConn = RunService.RenderStepped:Connect(function()
+    RunService:BindToRenderStep("SUR_CamLock", Enum.RenderPriority.Last.Value, function()
         workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
         workspace.CurrentCamera.CFrame = lockedCF
     end)
@@ -1621,7 +1734,7 @@ task.spawn(function()
     end
 
     -- Stop fighting the camera, destroy menu, restore everything
-    camConn:Disconnect()
+    RunService:UnbindFromRenderStep("SUR_CamLock")
     pcall(function() menuGui:Destroy() end)
     pcall(function() lp.PlayerGui.PlayerGUI.Enabled = true end)
     cleanupMenu()
