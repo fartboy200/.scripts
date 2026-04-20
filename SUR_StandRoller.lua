@@ -90,6 +90,8 @@ local pingUserId     = ""   -- Discord user ID for @mentions in alert webhooks
 
 local SPECIFIC_SAVE_FILE  = "SUR_SpecificStands.json"
 local BLACKLIST_SAVE_FILE = "SUR_Blacklist.json"
+local AUTO_RESTART_FILE   = "SUR_AutoRestart.json"
+local SCRIPT_URL          = "" -- paste your raw GitHub URL here
 
 local function saveSpecificStands()
     pcall(function()
@@ -695,8 +697,10 @@ local function startRolling()
                 if consecutiveNone >= 10 then
                     rolling = false
                     Options.StartRoller:SetValue(false)
-                    notify("Warning", "Roller broken — no stand after 10 rolls! Stopped.", 10)
-                    sendAlertWebhook("Roller appears broken — no stand received after 10 consecutive rolls! Manual fix needed.")
+                    notify("Warning", "Roller broken — rejoining server...", 10)
+                    sendAlertWebhook("Roller appears broken — no stand after 10 consecutive rolls. Rejoining server.")
+                    task.wait(2)
+                    rejoinServer(true)
                     break
                 end
             end
@@ -706,6 +710,23 @@ end
 
 local function stopRolling()
     rolling = false
+end
+
+local function rejoinServer(saveRestart)
+    if saveRestart then
+        pcall(function()
+            writefile(AUTO_RESTART_FILE, HttpService:JSONEncode({autoRestart = true}))
+        end)
+    end
+    if SCRIPT_URL ~= "" then
+        pcall(function()
+            local src = game:HttpGet(SCRIPT_URL)
+            queue_on_teleport(src)
+        end)
+    end
+    pcall(function()
+        game:GetService("TeleportService"):Teleport(game.PlaceId, lp)
+    end)
 end
 
 -- ─── Roller Tab UI ────────────────────────────────────────────────────────────
@@ -1413,9 +1434,7 @@ MiscTab:AddButton({
     Callback = function()
         notify("Rejoin", "Rejoining server...", 3)
         task.wait(1)
-        pcall(function()
-            game:GetService("TeleportService"):Teleport(game.PlaceId, lp)
-        end)
+        rejoinServer(rolling)
     end,
 })
 
@@ -1471,3 +1490,22 @@ end)
 Window:SelectTab(1)
 Fluent:Notify({Title = "SUR Stand Roller", Content = "Loaded!", Duration = 4})
 pcall(function() SaveManager:LoadAutoloadConfig() end)
+
+-- Auto-restart roller if we rejoined while rolling
+pcall(function()
+    if isfile(AUTO_RESTART_FILE) then
+        local data = HttpService:JSONDecode(readfile(AUTO_RESTART_FILE))
+        pcall(function() delfile(AUTO_RESTART_FILE) end)
+        if type(data) == "table" and data.autoRestart then
+            notify("Auto-Restart", "Roller resuming in 45 seconds...", 10)
+            task.delay(45, function()
+                -- Click the play button to dismiss the main menu
+                pcall(function()
+                    lp.PlayerGui.MenuGUI.Play.MouseButton1Click:Fire()
+                end)
+                task.wait(1)
+                Options.StartRoller:SetValue(true)
+            end)
+        end
+    end
+end)
