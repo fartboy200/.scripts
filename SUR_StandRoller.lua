@@ -91,7 +91,7 @@ local pingUserId     = ""   -- Discord user ID for @mentions in alert webhooks
 local SPECIFIC_SAVE_FILE  = "SUR_SpecificStands.json"
 local BLACKLIST_SAVE_FILE = "SUR_Blacklist.json"
 local AUTO_RESTART_FILE   = "SUR_AutoRestart.json"
-local SCRIPT_URL          = "" -- paste your raw GitHub URL here
+local SCRIPT_URL          = "https://raw.githubusercontent.com/kaydn31/.scripts/refs/heads/main/SUR_StandRoller.lua"
 
 local function saveSpecificStands()
     pcall(function()
