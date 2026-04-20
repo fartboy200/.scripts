@@ -499,6 +499,28 @@ local function sendStandDebugWebhook(attriDelayMs)
     })
 end
 
+-- ─── Rejoin ──────────────────────────────────────────────────────────────────
+
+local function rejoinServer(saveRestart)
+    if saveRestart then
+        pcall(function()
+            writefile(AUTO_RESTART_FILE, HttpService:JSONEncode({autoRestart = true}))
+        end)
+    end
+    if SCRIPT_URL ~= "" then
+        local ok, err = pcall(function()
+            local src = game:HttpGet(SCRIPT_URL)
+            queue_on_teleport(src)
+        end)
+        if not ok then
+            notify("Warning", "queue_on_teleport failed: " .. tostring(err), 6)
+        end
+    end
+    pcall(function()
+        game:GetService("TeleportService"):Teleport(game.PlaceId, lp)
+    end)
+end
+
 -- ─── Roll loop ────────────────────────────────────────────────────────────────
 
 local function startRolling()
@@ -710,23 +732,6 @@ end
 
 local function stopRolling()
     rolling = false
-end
-
-local function rejoinServer(saveRestart)
-    if saveRestart then
-        pcall(function()
-            writefile(AUTO_RESTART_FILE, HttpService:JSONEncode({autoRestart = true}))
-        end)
-    end
-    if SCRIPT_URL ~= "" then
-        pcall(function()
-            local src = game:HttpGet(SCRIPT_URL)
-            queue_on_teleport(src)
-        end)
-    end
-    pcall(function()
-        game:GetService("TeleportService"):Teleport(game.PlaceId, lp)
-    end)
 end
 
 -- ─── Roller Tab UI ────────────────────────────────────────────────────────────
@@ -1495,7 +1500,10 @@ pcall(function() SaveManager:LoadAutoloadConfig() end)
 pcall(function()
     if isfile(AUTO_RESTART_FILE) then
         local data = HttpService:JSONDecode(readfile(AUTO_RESTART_FILE))
-        pcall(function() delfile(AUTO_RESTART_FILE) end)
+        pcall(function()
+            if delfile then delfile(AUTO_RESTART_FILE)
+            elseif deletefile then deletefile(AUTO_RESTART_FILE) end
+        end)
         if type(data) == "table" and data.autoRestart then
             notify("Auto-Restart", "Roller resuming in 45 seconds...", 10)
             task.delay(45, function()
