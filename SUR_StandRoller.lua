@@ -1465,13 +1465,16 @@ pcall(function()
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
         if spyActive and (method == "FireServer" or method == "InvokeServer") then
-            local args = {...}
-            local parts = {}
-            for _, v in ipairs(args) do
-                table.insert(parts, tostring(v))
-            end
-            local argStr = #parts > 0 and table.concat(parts, ", ") or "no args"
-            notify("[Spy] " .. method, self:GetFullName() .. "\n(" .. argStr .. ")", 10)
+            pcall(function()
+                if not (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then return end
+                local args = {...}
+                local parts = {}
+                for _, v in ipairs(args) do
+                    table.insert(parts, tostring(v))
+                end
+                local argStr = #parts > 0 and table.concat(parts, ", ") or "no args"
+                notify("[Spy] " .. method, self.Name .. "\n(" .. argStr .. ")", 10)
+            end)
         end
         return oldNamecall(self, ...)
     end)
