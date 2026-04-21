@@ -335,7 +335,7 @@ local function saveToSlot(stand)
     end)
 
     local deadline = tick() + 6
-    repeat task.wait(0.05) until (activeCleared and slotFilled) or tick() > deadline
+    repeat task.wait(0.05) until (activeCleared and slotFilled) or isDead() or tick() > deadline
 
     if c1 then c1:Disconnect() end
     c2:Disconnect()
@@ -605,7 +605,7 @@ local function startRolling()
                             end
                         end)
                         local dl = tick() + 1.5
-                        repeat task.wait(0.05) until settled or tick() > dl
+                        repeat task.wait(0.05) until settled or isDead() or tick() > dl
                         ac:Disconnect()
                         if not settled then
                             existing.attribute = tostring(av.Value)  -- genuinely None, or timed out
@@ -667,7 +667,9 @@ local function startRolling()
                 -- Not the one — remove with Rokakaka
                 sendDebugWebhook("Stand Skipped — Using Rokakaka", existing.name, existing.attribute, "Does not match condition")
                 if not lp.Backpack:FindFirstChild("Rokakaka") and not char:FindFirstChild("Rokakaka") then
+                    if isDead() then continue end
                     task.wait(2)
+                    if isDead() then continue end
                     if lp.Backpack:FindFirstChild("Rokakaka") or (lp.Character and lp.Character:FindFirstChild("Rokakaka")) then continue end
                     rolling = false
                     Options.StartRoller:SetValue(false)
@@ -686,7 +688,7 @@ local function startRolling()
                             if v == "None" or v == "" then cleared = true end
                         end)
                         local dl = tick() + 4
-                        repeat task.wait(0.05) until cleared or tick() > dl
+                        repeat task.wait(0.05) until cleared or isDead() or tick() > dl
                         c:Disconnect()
                     end
                 end
@@ -695,8 +697,9 @@ local function startRolling()
 
             -- Use arrow/item
             if not lp.Backpack:FindFirstChild(itemName) and not char:FindFirstChild(itemName) then
-                -- Grace period: backpack can clear a moment before death registers
+                if isDead() then continue end
                 task.wait(2)
+                if isDead() then continue end
                 if lp.Backpack:FindFirstChild(itemName) or (lp.Character and lp.Character:FindFirstChild(itemName)) then continue end
                 rolling = false
                 Options.StartRoller:SetValue(false)
@@ -726,7 +729,7 @@ local function startRolling()
                         end
                     end)
                     local dl = tick() + 5
-                    repeat task.wait(0.05) until standAppeared or tick() > dl
+                    repeat task.wait(0.05) until standAppeared or isDead() or tick() > dl
                     sc:Disconnect()
                     if standAppeared then
                         task.wait(settle)
@@ -740,6 +743,10 @@ local function startRolling()
             if standAppeared then
                 sendDebugWebhook("Stand Rolled", rolledStandName, rolledStandAttrib, "Roll #" .. rollCount)
                 consecutiveNone = 0
+            elseif isDead() then
+                -- Died mid-roll — don't count as a broken roll, just restart the loop
+                consecutiveNone = 0
+                continue
             else
                 consecutiveNone = consecutiveNone + 1
                 sendDebugWebhook("No Stand Received", "—", "—", "consecutiveNone = " .. consecutiveNone)
