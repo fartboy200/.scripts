@@ -78,6 +78,7 @@ local ATTRIBUTES = {
 -- ─── State ────────────────────────────────────────────────────────────────────
 
 local rolling        = false
+local waitForItems   = false
 local testRollTarget = 10
 local webhookUrl     = ""
 local rollCount      = 0
@@ -671,6 +672,11 @@ local function startRolling()
                     task.wait(2)
                     if isDead() then continue end
                     if lp.Backpack:FindFirstChild("Rokakaka") or (lp.Character and lp.Character:FindFirstChild("Rokakaka")) then continue end
+                    if waitForItems then
+                        notify("Roller", "Out of Rokakaka — waiting for restock...", 5)
+                        repeat task.wait(2) until (lp.Backpack:FindFirstChild("Rokakaka") or (lp.Character and lp.Character:FindFirstChild("Rokakaka"))) or not rolling
+                        continue
+                    end
                     rolling = false
                     Options.StartRoller:SetValue(false)
                     notify("Warning", "Out of Rokakaka! Roller stopped.", 8)
@@ -701,6 +707,11 @@ local function startRolling()
                 task.wait(2)
                 if isDead() then continue end
                 if lp.Backpack:FindFirstChild(itemName) or (lp.Character and lp.Character:FindFirstChild(itemName)) then continue end
+                if waitForItems then
+                    notify("Roller", "Out of " .. itemName .. " — waiting for restock...", 5)
+                    repeat task.wait(2) until (lp.Backpack:FindFirstChild(itemName) or (lp.Character and lp.Character:FindFirstChild(itemName))) or not rolling
+                    continue
+                end
                 rolling = false
                 Options.StartRoller:SetValue(false)
                 notify("Warning", "Out of " .. itemName .. "! Roller stopped.", 8)
@@ -819,6 +830,17 @@ Options.StartRoller:OnChanged(function()
             notify("Info", "Roller stopped after " .. rollCount .. " rolls.", 3)
         end
     end
+end)
+
+RollTab:AddToggle("WaitForItems", {
+    Title       = "Wait for Items",
+    Description = "Instead of stopping when out of arrows or Rokakaka, pause and wait for them to reappear (e.g. after Auto Buy restocks).",
+    Icon        = "pause",
+    Default     = false,
+})
+
+Options.WaitForItems:OnChanged(function()
+    waitForItems = Options.WaitForItems.Value
 end)
 
 RollTab:AddToggle("ExtendedAttriWait", {
