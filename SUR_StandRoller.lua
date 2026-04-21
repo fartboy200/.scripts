@@ -165,15 +165,24 @@ local function isDead()
     return not hum or hum.Health <= 0
 end
 
--- Waits up to `timeout` seconds for the player to respawn and backpack to repopulate.
--- Returns true if they respawned in time, false if timed out.
 local function waitForRespawn()
-    if not isDead() then return end
+    -- Connect BEFORE isDead() check — prevents missing CharacterAdded if it fires
+    -- in the gap between the check and Connect(), which would cause an infinite wait.
     local respawned = false
     local conn = lp.CharacterAdded:Connect(function() respawned = true end)
-    repeat task.wait(0.2) until respawned
-    conn:Disconnect()
-    task.wait(3)  -- backpack repopulates a couple seconds after spawn
+
+    if isDead() then
+        local dl = tick() + 30
+        repeat task.wait(0.2) until respawned or tick() > dl
+        conn:Disconnect()
+        -- Wait for server to populate backpack (items arrive 1-3s after spawn)
+        task.wait(3)
+        -- Extra guard: if backpack still empty, wait up to 5 more seconds
+        local bpDl = tick() + 5
+        repeat task.wait(0.3) until next(lp.Backpack:GetChildren()) ~= nil or tick() > bpDl
+    else
+        conn:Disconnect()
+    end
 end
 
 -- Find the stand the character currently has equipped/stored.
