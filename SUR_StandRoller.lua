@@ -12,7 +12,7 @@ local lp            = Players.LocalPlayer
 
 local Window = Fluent:CreateWindow({
     Title       = "SUR Stand Roller",
-    SubTitle    = "v1.9",
+    SubTitle    = "v2.0",
     TabWidth    = 130,
     Size        = UDim2.fromOffset(460, 420),
     Acrylic     = true,
@@ -90,7 +90,8 @@ local specificStands = {}   -- {name=internalID, attribs={...}} — empty attrib
 local blacklistStands = {}  -- {name=internalID, attribs={...}} — always Rokaka'd
 local pingUserId     = ""   -- Discord user ID for @mentions in alert webhooks
 local scriptReady    = false
-local shopBusy       = false  -- true while auto buy/sell is running; blocks other scripts' TPs
+local shopBusy        = false  -- true while buy/sell is running
+local _shopCallActive = false  -- true only while OUR own FireServer is executing
 
 local SPECIFIC_SAVE_FILE  = "SUR_SpecificStands.json"
 local BLACKLIST_SAVE_FILE = "SUR_Blacklist.json"
@@ -145,6 +146,15 @@ end
 
 local function resetCharacter()
     pcall(function() lp:LoadCharacter() end)
+end
+
+-- Fires a remote while marking it as ours so the shop blocker lets it through
+local function shopFire(remote, ...)
+    local args = {...}
+    _shopCallActive = true
+    local ok, err = pcall(function() remote:FireServer(table.unpack(args)) end)
+    _shopCallActive = false
+    return ok, err
 end
 
 -- Returns true if the player is currently dead or respawning
@@ -1477,11 +1487,22 @@ end)
 -- ─── Remote Spy ──────────────────────────────────────────────────────────────
 
 local spyActive = false
+local _tpService = game:GetService("TeleportService")
 
 pcall(function()
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
+
+        if shopBusy then
+            -- Always block TeleportService calls from any script
+            if self == _tpService then return end
+            -- Block other scripts' remote calls; let our own through
+            if not _shopCallActive and (method == "FireServer" or method == "InvokeServer") then
+                return
+            end
+        end
+
         if spyActive and (method == "FireServer" or method == "InvokeServer") then
             local args = {...}
             pcall(function()
@@ -1641,23 +1662,24 @@ local function doSell()
     end
     local amount = sellAll and count or math.min(sellAmount, count)
     shopBusy = true
-    notify("Shop", "Opening stock market...", 3)
-    if not openStockMarket() then
+    local smEvent = game:GetService("ReplicatedStorage").Events.SM_Event
+    local opened = false
+    for attempt = 1, 5 do
+        notify("Shop", "Opening stock market" .. (attempt > 1 and " (retry " .. attempt .. "/5)..." or "..."), 3)
+        if openStockMarket() then opened = true; break end
+        task.wait(2)
+    end
+    if not opened then
         shopBusy = false
         notify("Shop", "Failed to open stock market.", 4)
         return false
     end
     pcall(function()
-        local gui = lp.PlayerGui.newStockMarketGUI
-        gui.SM_Frame.SelectFrame.BulkSell.MouseButton1Click:Fire()
+        lp.PlayerGui.newStockMarketGUI.SM_Frame.SelectFrame.BulkSell.MouseButton1Click:Fire()
     end)
     task.wait(0.3)
-    local ok, err = pcall(function()
-        game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Sell", item, amount)
-    end)
-    pcall(function()
-        game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Cancel")
-    end)
+    local ok, err = shopFire(smEvent, "Sell", item, amount)
+    shopFire(smEvent, "Cancel")
     pcall(function()
         lp.PlayerGui.newStockMarketGUI.SM_Frame.ExitButton.MouseButton1Click:Fire()
     end)
@@ -1760,8 +1782,13 @@ local function doBuy()
     local count  = math.max(1, merchantSpamCount)
     merchantBuying = true
     shopBusy = true
-    notify("Shop", "Teleporting to MerchantAU...", 2)
-    if not openMerchantAU() then
+    local opened = false
+    for attempt = 1, 5 do
+        notify("Shop", "Teleporting to MerchantAU" .. (attempt > 1 and " (retry " .. attempt .. "/5)..." or "..."), 2)
+        if openMerchantAU() then opened = true; break end
+        task.wait(2)
+    end
+    if not opened then
         notify("Shop", "MerchantAU NPC not found.", 4)
         merchantBuying = false
         shopBusy = false
@@ -1779,12 +1806,10 @@ local function doBuy()
     local fired = 0
     local prevCount = getItemCount(itemName)
     for i = 1, count do
-        pcall(function()
-            BuyItem:FireServer("MerchantAU", option)
-        end)
+        shopFire(BuyItem, "MerchantAU", option)
         fired = fired + 1
-        if fired % 10 == 0 then
-            task.wait(0.1)
+        if fired % 25 == 0 then
+            task.wait(0.3)
             local newCount = getItemCount(itemName)
             if newCount <= prevCount then
                 notify("Shop", "Stopped — hit max or out of coins at " .. fired .. " fires.", 4)
@@ -1832,40 +1857,41 @@ local function doAutoSell()
         notify("Auto Sell", "No items selected to sell.", 4)
         return
     end
+    local smEvent = game:GetService("ReplicatedStorage").Events.SM_Event
+    shopBusy = true
     for _, item in ipairs(autoSellItems) do
         local count = getItemCount(item)
         if count == 0 then
             notify("Auto Sell", "No " .. item .. " to sell, skipping.", 3)
         else
             local amount = autoSellAllFlag and count or math.min(autoSellAmount, count)
-            shopBusy = true
-            if not openStockMarket() then
-                shopBusy = false
-                notify("Auto Sell", "Failed to open stock market.", 4)
-                return
+            local opened = false
+            for attempt = 1, 5 do
+                if openStockMarket() then opened = true; break end
+                notify("Auto Sell", "Retrying market for " .. item .. " (" .. attempt .. "/5)...", 2)
+                task.wait(2)
             end
-            pcall(function()
-                local gui = lp.PlayerGui.newStockMarketGUI
-                gui.SM_Frame.SelectFrame.BulkSell.MouseButton1Click:Fire()
-            end)
-            task.wait(0.3)
-            local ok, err = pcall(function()
-                game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Sell", item, amount)
-            end)
-            pcall(function()
-                game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Cancel")
-            end)
-            pcall(function()
-                lp.PlayerGui.newStockMarketGUI.SM_Frame.ExitButton.MouseButton1Click:Fire()
-            end)
-            shopBusy = false
-            if ok then
-                notify("Auto Sell", "Sold " .. amount .. "x " .. item, 4)
+            if not opened then
+                notify("Auto Sell", "Could not open market for " .. item .. ", skipping.", 4)
             else
-                notify("Auto Sell", "Sell failed (" .. item .. "): " .. tostring(err), 5)
+                pcall(function()
+                    lp.PlayerGui.newStockMarketGUI.SM_Frame.SelectFrame.BulkSell.MouseButton1Click:Fire()
+                end)
+                task.wait(0.3)
+                local ok, err = shopFire(smEvent, "Sell", item, amount)
+                shopFire(smEvent, "Cancel")
+                pcall(function()
+                    lp.PlayerGui.newStockMarketGUI.SM_Frame.ExitButton.MouseButton1Click:Fire()
+                end)
+                if ok then
+                    notify("Auto Sell", "Sold " .. amount .. "x " .. item, 4)
+                else
+                    notify("Auto Sell", "Sell failed (" .. item .. "): " .. tostring(err), 5)
+                end
             end
         end
     end
+    shopBusy = false
     resetCharacter()
 end
 
@@ -1875,8 +1901,13 @@ local function doAutoBuy()
     local count  = math.max(1, autoBuyCount)
     merchantBuying = true
     shopBusy = true
-    notify("Auto Buy", "Teleporting to MerchantAU...", 2)
-    if not openMerchantAU() then
+    local opened = false
+    for attempt = 1, 5 do
+        notify("Auto Buy", "Teleporting to MerchantAU" .. (attempt > 1 and " (retry " .. attempt .. "/5)..." or "..."), 2)
+        if openMerchantAU() then opened = true; break end
+        task.wait(2)
+    end
+    if not opened then
         notify("Auto Buy", "MerchantAU NPC not found.", 4)
         merchantBuying = false
         shopBusy = false
@@ -1894,10 +1925,10 @@ local function doAutoBuy()
     local fired = 0
     local prevCount = getItemCount(itemName)
     for i = 1, count do
-        pcall(function() BuyItem:FireServer("MerchantAU", option) end)
+        shopFire(BuyItem, "MerchantAU", option)
         fired = fired + 1
-        if fired % 10 == 0 then
-            task.wait(0.1)
+        if fired % 25 == 0 then
+            task.wait(0.3)
             local newCount = getItemCount(itemName)
             if newCount <= prevCount then
                 notify("Auto Buy", "Stopped — hit max or out of coins at " .. fired .. " fires.", 4)
