@@ -1849,7 +1849,7 @@ local autoSellAmount   = 1
 local autoSellAllFlag  = false
 
 -- Auto-tab-specific buy settings (independent of Shop tab)
-local autoBuyOption    = "Option1"
+local autoBuyOptions   = {}   -- selected option keys (multi)
 local autoBuyCount     = 50
 
 local function doAutoSell()
@@ -1897,22 +1897,13 @@ end
 
 local function doAutoBuy()
     if merchantBuying then return end
-    local option = autoBuyOption
-    local count  = math.max(1, autoBuyCount)
-    merchantBuying = true
-    shopBusy = true
-    local opened = false
-    for attempt = 1, 5 do
-        notify("Auto Buy", "Teleporting to MerchantAU" .. (attempt > 1 and " (retry " .. attempt .. "/5)..." or "..."), 2)
-        if openMerchantAU() then opened = true; break end
-        task.wait(2)
-    end
-    if not opened then
-        notify("Auto Buy", "MerchantAU NPC not found.", 4)
-        merchantBuying = false
-        shopBusy = false
+    if #autoBuyOptions == 0 then
+        notify("Auto Buy", "No items selected to buy.", 4)
         return
     end
+    local count = math.max(1, autoBuyCount)
+    merchantBuying = true
+    shopBusy = true
     local BuyItem = game:GetService("ReplicatedStorage").Events:FindFirstChild("BuyItem")
     if not BuyItem then
         notify("Auto Buy", "BuyItem remote not found!", 4)
@@ -1920,23 +1911,34 @@ local function doAutoBuy()
         shopBusy = false
         return
     end
-    local itemName = MERCHANT_OPTION_ITEM[option] or "Rokakaka"
-    notify("Auto Buy", "Buying " .. count .. "x...", 2)
-    local fired = 0
-    local prevCount = getItemCount(itemName)
-    for i = 1, count do
-        shopFire(BuyItem, "MerchantAU", option)
-        fired = fired + 1
-        if fired % 25 == 0 then
-            task.wait(0.3)
-            local newCount = getItemCount(itemName)
-            if newCount <= prevCount then
-                notify("Auto Buy", "Stopped — hit max or out of coins at " .. fired .. " fires.", 4)
-                merchantBuying = false
-                shopBusy = false
-                return
+    for _, option in ipairs(autoBuyOptions) do
+        local opened = false
+        for attempt = 1, 5 do
+            notify("Auto Buy", "Teleporting to MerchantAU" .. (attempt > 1 and " (retry " .. attempt .. "/5)..." or "..."), 2)
+            if openMerchantAU() then opened = true; break end
+            task.wait(2)
+        end
+        if not opened then
+            notify("Auto Buy", "MerchantAU NPC not found, skipping.", 4)
+        else
+            local itemName = MERCHANT_OPTION_ITEM[option] or "Rokakaka"
+            notify("Auto Buy", "Buying " .. count .. "x " .. itemName .. "...", 2)
+            local fired = 0
+            local prevCount = getItemCount(itemName)
+            for i = 1, count do
+                shopFire(BuyItem, "MerchantAU", option)
+                fired = fired + 1
+                if fired % 25 == 0 then
+                    task.wait(0.3)
+                    local newCount = getItemCount(itemName)
+                    if newCount <= prevCount then
+                        notify("Auto Buy", "Stopped — hit max or out of coins at " .. fired .. " fires.", 4)
+                        break
+                    end
+                    prevCount = newCount
+                end
             end
-            prevCount = newCount
+            notify("Auto Buy", "Done! " .. fired .. " purchase(s) fired for " .. itemName, 3)
         end
     end
     pcall(function()
@@ -1945,7 +1947,6 @@ local function doAutoBuy()
     merchantBuying = false
     shopBusy = false
     resetCharacter()
-    notify("Auto Buy", "Done! " .. fired .. " purchase(s) fired.", 4)
 end
 
 -- ── Auto Sell UI ─────────────────────────────────────────────────────────────
@@ -2028,14 +2029,18 @@ AutoTab:AddParagraph({
 })
 
 AutoTab:AddDropdown("AutoBuyItemPick", {
-    Title   = "Item to Buy",
+    Title   = "Items to Buy",
     Icon    = "shopping-bag",
     Values  = MERCHANT_OPTION_LABELS,
-    Default = MERCHANT_OPTION_LABELS[1],
+    Multi   = true,
+    Default = {},
 })
 
 Options.AutoBuyItemPick:OnChanged(function()
-    autoBuyOption = MERCHANT_OPTIONS[Options.AutoBuyItemPick.Value] or "Option1"
+    autoBuyOptions = {}
+    for k, v in pairs(Options.AutoBuyItemPick.Value) do
+        if v then table.insert(autoBuyOptions, MERCHANT_OPTIONS[k] or k) end
+    end
 end)
 
 AutoTab:AddInput("AutoBuyCount", {
@@ -2117,6 +2122,20 @@ pcall(function()
             )
         end)
     end)
+end)
+
+-- ─── Hide Travlling GUI ───────────────────────────────────────────────────────
+
+pcall(function()
+    local pg = lp.PlayerGui
+    local function hideTravlling(gui)
+        if gui.Name == "Travlling" then
+            pcall(function() gui.Enabled = false end)
+            pcall(function() gui:Destroy() end)
+        end
+    end
+    for _, gui in ipairs(pg:GetChildren()) do hideTravlling(gui) end
+    pg.ChildAdded:Connect(hideTravlling)
 end)
 
 -- ─── Done ─────────────────────────────────────────────────────────────────────
