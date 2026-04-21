@@ -12,7 +12,7 @@ local lp            = Players.LocalPlayer
 
 local Window = Fluent:CreateWindow({
     Title       = "SUR Stand Roller",
-    SubTitle    = "v1.0",
+    SubTitle    = "v1.9",
     TabWidth    = 130,
     Size        = UDim2.fromOffset(460, 420),
     Acrylic     = true,
@@ -27,6 +27,7 @@ local SpecificTab   = Window:AddTab({Title = "Specific",  Icon = "list"})
 local BlacklistTab  = Window:AddTab({Title = "Blacklist", Icon = "slash"})
 local WebhookTab    = Window:AddTab({Title = "Webhook",   Icon = "send"})
 local ShopTab       = Window:AddTab({Title = "Shop",      Icon = "shopping-cart"})
+local AutoTab       = Window:AddTab({Title = "Auto",      Icon = "clock"})
 local MiscTab       = Window:AddTab({Title = "Misc",      Icon = "settings"})
 local ConfigTab     = Window:AddTab({Title = "Configs",   Icon = "save"})
 
@@ -89,6 +90,7 @@ local specificStands = {}   -- {name=internalID, attribs={...}} — empty attrib
 local blacklistStands = {}  -- {name=internalID, attribs={...}} — always Rokaka'd
 local pingUserId     = ""   -- Discord user ID for @mentions in alert webhooks
 local scriptReady    = false
+local shopBusy       = false  -- true while auto buy/sell is running; blocks other scripts' TPs
 
 local SPECIFIC_SAVE_FILE  = "SUR_SpecificStands.json"
 local BLACKLIST_SAVE_FILE = "SUR_Blacklist.json"
@@ -139,6 +141,10 @@ end
 
 local function notify(title, content, duration)
     Fluent:Notify({Title = title, Content = content, Duration = duration or 3})
+end
+
+local function resetCharacter()
+    pcall(function() lp:LoadCharacter() end)
 end
 
 -- Returns true if the player is currently dead or respawning
@@ -1502,11 +1508,87 @@ MiscTab:AddToggle("RemoteSpy", {
 Options.RemoteSpy:OnChanged(function()
     spyActive = Options.RemoteSpy.Value
     if scriptReady then
-        notify("Remote Spy", spyActive and "Spy enabled — interact with the game to see remotes." or "Spy disabled.", 3)
+        notify("Remote Spy", spyActive and "Spy enabled — check console for output." or "Spy disabled.", 3)
+    end
+end)
+
+-- GUI button spy — hooks all TextButton/ImageButton clicks in PlayerGui
+local guiSpyActive = false
+local guiSpyConns  = {}
+
+local function refreshGuiSpy()
+    for _, c in ipairs(guiSpyConns) do pcall(function() c:Disconnect() end) end
+    guiSpyConns = {}
+    if not guiSpyActive then return end
+
+    local function hookGui(gui)
+        for _, v in ipairs(gui:GetDescendants()) do
+            if v:IsA("TextButton") or v:IsA("ImageButton") then
+                local path = v.Name
+                local p = v.Parent
+                while p and p ~= gui do path = p.Name .. "." .. path; p = p.Parent end
+                local c = v.MouseButton1Click:Connect(function()
+                    print("[GUI Spy] Click | " .. gui.Name .. " > " .. path)
+                end)
+                table.insert(guiSpyConns, c)
+            end
+        end
+    end
+
+    for _, gui in ipairs(lp.PlayerGui:GetChildren()) do
+        pcall(function() hookGui(gui) end)
+    end
+
+    -- Also hook proximity prompts
+    local ppConn = game:GetService("ProximityPromptService").PromptTriggered:Connect(function(prompt)
+        print("[GUI Spy] ProximityPrompt | " .. prompt:GetFullName())
+    end)
+    table.insert(guiSpyConns, ppConn)
+
+    -- Hook any GUIs that appear after spy is enabled
+    local addConn = lp.PlayerGui.ChildAdded:Connect(function(child)
+        task.wait(0.2)
+        pcall(function() hookGui(child) end)
+    end)
+    table.insert(guiSpyConns, addConn)
+end
+
+MiscTab:AddToggle("GuiSpy", {
+    Title       = "GUI + Proximity Spy",
+    Description = "Logs button clicks and proximity prompt triggers to console — use alongside Remote Spy to map buttons to remotes",
+    Icon        = "mouse-pointer",
+    Default     = false,
+})
+
+Options.GuiSpy:OnChanged(function()
+    guiSpyActive = Options.GuiSpy.Value
+    refreshGuiSpy()
+    if scriptReady then
+        notify("GUI Spy", guiSpyActive and "Enabled — click buttons/prompts and check console." or "Disabled.", 3)
     end
 end)
 
 -- ─── Shop Tab ────────────────────────────────────────────────────────────────
+
+local function openStockMarket()
+    -- TP to NPC model position
+    local root = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    local npc = workspace.Map.NPCs.StockMarket
+    local npcRoot = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChildWhichIsA("BasePart")
+    if not npcRoot then return false end
+    root.CFrame = npcRoot.CFrame * CFrame.new(0, 0, -3)
+    task.wait(0.5)
+    -- Fire proximity prompt
+    local ok = pcall(function()
+        fireproximityprompt(workspace.Map.NPCs.StockMarket.TalkToPrompt)
+    end)
+    if not ok then return false end
+    -- Wait up to 5s for the GUI to appear
+    local deadline = tick() + 5
+    repeat task.wait(0.1) until (lp.PlayerGui:FindFirstChild("newStockMarketGUI") and lp.PlayerGui.newStockMarketGUI.Enabled) or tick() > deadline
+    return lp.PlayerGui:FindFirstChild("newStockMarketGUI") ~= nil
+end
 
 local SELLABLE_ITEMS = {"Charged Arrow", "Requiem Arrow"}
 
@@ -1516,7 +1598,7 @@ local sellAll    = false
 
 ShopTab:AddParagraph({
     Title   = "Sell Items",
-    Content = "Sells items to the shop via SM_Event. Toggle 'Sell All' to ignore the amount and sell your entire stack.",
+    Content = "Sells items to the shop. Teleports to the NPC and opens the market before firing.",
 })
 
 ShopTab:AddDropdown("SellItemPick", {
@@ -1550,73 +1632,420 @@ Options.SellAll:OnChanged(function()
     sellAll = Options.SellAll.Value
 end)
 
+local function doSell()
+    local item = sellItem
+    local count = getItemCount(item)
+    if count == 0 then
+        notify("Shop", "You have no " .. item .. " to sell.", 4)
+        return false
+    end
+    local amount = sellAll and count or math.min(sellAmount, count)
+    shopBusy = true
+    notify("Shop", "Opening stock market...", 3)
+    if not openStockMarket() then
+        shopBusy = false
+        notify("Shop", "Failed to open stock market.", 4)
+        return false
+    end
+    pcall(function()
+        local gui = lp.PlayerGui.newStockMarketGUI
+        gui.SM_Frame.SelectFrame.BulkSell.MouseButton1Click:Fire()
+    end)
+    task.wait(0.3)
+    local ok, err = pcall(function()
+        game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Sell", item, amount)
+    end)
+    pcall(function()
+        game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Cancel")
+    end)
+    pcall(function()
+        lp.PlayerGui.newStockMarketGUI.SM_Frame.ExitButton.MouseButton1Click:Fire()
+    end)
+    shopBusy = false
+    resetCharacter()
+    if ok then
+        notify("Shop", "Sold " .. amount .. "x " .. item, 4)
+        return true
+    else
+        notify("Shop", "Sell failed: " .. tostring(err), 5)
+        return false
+    end
+end
+
 ShopTab:AddButton({
     Title    = "Sell",
     Icon     = "dollar-sign",
-    Callback = function()
-        local item = sellItem
-        local count = getItemCount(item)
-        if count == 0 then
-            notify("Shop", "You have no " .. item .. " to sell.", 4)
-            return
-        end
-        local amount = sellAll and count or math.min(sellAmount, count)
-        local ok, err = pcall(function()
-            game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Sell", item, amount)
-        end)
-        if ok then
-            notify("Shop", "Sold " .. amount .. "x " .. item, 4)
-        else
-            notify("Shop", "Sell failed: " .. tostring(err), 5)
-        end
-    end,
+    Callback = function() doSell() end,
 })
 
-local BUYABLE_ITEMS = {"Rokakaka", "Stand Arrow", "Charged Arrow", "Requiem Arrow"}
+-- ─── MerchantAU spam buy ─────────────────────────────────────────────────────
 
-local buyItem   = BUYABLE_ITEMS[1]
-local buyAmount = 1
+local merchantBuying = false
+
+local MERCHANT_CF = CFrame.new(
+    11926.1094, -3.45856023, -4510.9082,
+    0.998864949,  0.0278102029, 0.0386722721,
+    -0.0288556386, 0.999225676,  0.0267434008,
+    -0.0378986038, -0.0278289542, 0.998894036
+)
+
+local MERCHANT_OPTIONS = {
+    ["10x Rokakaka (bulk)"]   = "Option1",
+    ["1x Rokakaka"]           = "Option2",
+    ["10x Stand Arrow (bulk)"]= "Option3",
+    ["1x Stand Arrow"]        = "Option4",
+}
+local MERCHANT_OPTION_LABELS = {
+    "10x Rokakaka (bulk)",
+    "1x Rokakaka",
+    "10x Stand Arrow (bulk)",
+    "1x Stand Arrow",
+}
+local MERCHANT_OPTION_ITEM = {
+    Option1 = "Rokakaka",
+    Option2 = "Rokakaka",
+    Option3 = "Stand Arrow",
+    Option4 = "Stand Arrow",
+}
+
+local function openMerchantAU()
+    local root = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    root.CFrame = MERCHANT_CF
+    task.wait(0.3)
+    local npc = workspace.Map.NPCs:FindFirstChild("MerchantAU")
+    if not npc then return false end
+    pcall(function()
+        fireproximityprompt(npc:FindFirstChild("Talk") or npc:WaitForChild("Talk", 2))
+    end)
+    -- Wait for the NPC dialogue GUI to fully open before spamming
+    local deadline = tick() + 4
+    repeat task.wait(0.1) until lp.PlayerGui:FindFirstChild("NpcDialouge") or tick() > deadline
+    task.wait(0.2)
+    return true
+end
+
+local merchantOption    = "Option1"
+local merchantSpamCount = 50
 
 ShopTab:AddParagraph({
-    Title   = "Buy Items",
-    Content = "Buys items from the shop via SM_Event.",
+    Title   = "Buy Items (MerchantAU)",
+    Content = "Teleports to the MerchantAU NPC and spams BuyItem. Bulk options buy 10 at a time (cheaper per unit).",
 })
 
-ShopTab:AddDropdown("BuyItemPick", {
+ShopTab:AddDropdown("MerchantOptionPick", {
     Title   = "Item to Buy",
     Icon    = "shopping-bag",
-    Values  = BUYABLE_ITEMS,
-    Default = BUYABLE_ITEMS[1],
+    Values  = MERCHANT_OPTION_LABELS,
+    Default = MERCHANT_OPTION_LABELS[1],
 })
 
-Options.BuyItemPick:OnChanged(function()
-    buyItem = Options.BuyItemPick.Value
+Options.MerchantOptionPick:OnChanged(function()
+    merchantOption = MERCHANT_OPTIONS[Options.MerchantOptionPick.Value] or "Option1"
 end)
 
-ShopTab:AddInput("BuyAmount", {
-    Title       = "Amount",
-    Default     = "1",
-    Placeholder = "e.g. 10",
+ShopTab:AddInput("MerchantSpamCount", {
+    Title       = "Spam Count",
+    Default     = "50",
+    Placeholder = "e.g. 50",
     Numeric     = true,
     Callback    = function(v)
-        buyAmount = tonumber(v) or 1
+        merchantSpamCount = tonumber(v) or 50
     end,
 })
+
+local function doBuy()
+    if merchantBuying then return false end
+    local option = merchantOption
+    local count  = math.max(1, merchantSpamCount)
+    merchantBuying = true
+    shopBusy = true
+    notify("Shop", "Teleporting to MerchantAU...", 2)
+    if not openMerchantAU() then
+        notify("Shop", "MerchantAU NPC not found.", 4)
+        merchantBuying = false
+        shopBusy = false
+        return false
+    end
+    local BuyItem = game:GetService("ReplicatedStorage").Events:FindFirstChild("BuyItem")
+    if not BuyItem then
+        notify("Shop", "BuyItem remote not found!", 4)
+        merchantBuying = false
+        shopBusy = false
+        return false
+    end
+    local itemName = MERCHANT_OPTION_ITEM[option] or "Rokakaka"
+    notify("Shop", "Buying " .. count .. "x...", 2)
+    local fired = 0
+    local prevCount = getItemCount(itemName)
+    for i = 1, count do
+        pcall(function()
+            BuyItem:FireServer("MerchantAU", option)
+        end)
+        fired = fired + 1
+        if fired % 10 == 0 then
+            task.wait(0.1)
+            local newCount = getItemCount(itemName)
+            if newCount <= prevCount then
+                notify("Shop", "Stopped — hit max or out of coins at " .. fired .. " fires.", 4)
+                merchantBuying = false
+                shopBusy = false
+                return false
+            end
+            prevCount = newCount
+        end
+    end
+    pcall(function()
+        lp.PlayerGui.NpcDialouge.Frame.No.MouseButton1Click:Fire()
+    end)
+    merchantBuying = false
+    shopBusy = false
+    resetCharacter()
+    notify("Shop", "Done! " .. fired .. " purchase(s) fired.", 4)
+    return true
+end
 
 ShopTab:AddButton({
     Title    = "Buy",
     Icon     = "plus-circle",
-    Callback = function()
-        local ok, err = pcall(function()
-            game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Buy", buyItem, buyAmount)
-        end)
-        if ok then
-            notify("Shop", "Bought " .. buyAmount .. "x " .. buyItem, 4)
+    Callback = function() task.spawn(doBuy) end,
+})
+
+-- ─── Auto Tab ────────────────────────────────────────────────────────────────
+
+local autoSellEnabled  = false
+local autoBuyEnabled   = false
+local autoSellMinutes  = 10
+local autoBuyMinutes   = 10
+
+-- Auto-tab-specific sell settings (independent of Shop tab)
+local autoSellItems    = {}   -- selected item names (multi)
+local autoSellAmount   = 1
+local autoSellAllFlag  = false
+
+-- Auto-tab-specific buy settings (independent of Shop tab)
+local autoBuyOption    = "Option1"
+local autoBuyCount     = 50
+
+local function doAutoSell()
+    if #autoSellItems == 0 then
+        notify("Auto Sell", "No items selected to sell.", 4)
+        return
+    end
+    for _, item in ipairs(autoSellItems) do
+        local count = getItemCount(item)
+        if count == 0 then
+            notify("Auto Sell", "No " .. item .. " to sell, skipping.", 3)
         else
-            notify("Shop", "Buy failed: " .. tostring(err), 5)
+            local amount = autoSellAllFlag and count or math.min(autoSellAmount, count)
+            shopBusy = true
+            if not openStockMarket() then
+                shopBusy = false
+                notify("Auto Sell", "Failed to open stock market.", 4)
+                return
+            end
+            pcall(function()
+                local gui = lp.PlayerGui.newStockMarketGUI
+                gui.SM_Frame.SelectFrame.BulkSell.MouseButton1Click:Fire()
+            end)
+            task.wait(0.3)
+            local ok, err = pcall(function()
+                game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Sell", item, amount)
+            end)
+            pcall(function()
+                game:GetService("ReplicatedStorage").Events.SM_Event:FireServer("Cancel")
+            end)
+            pcall(function()
+                lp.PlayerGui.newStockMarketGUI.SM_Frame.ExitButton.MouseButton1Click:Fire()
+            end)
+            shopBusy = false
+            if ok then
+                notify("Auto Sell", "Sold " .. amount .. "x " .. item, 4)
+            else
+                notify("Auto Sell", "Sell failed (" .. item .. "): " .. tostring(err), 5)
+            end
         end
+    end
+    resetCharacter()
+end
+
+local function doAutoBuy()
+    if merchantBuying then return end
+    local option = autoBuyOption
+    local count  = math.max(1, autoBuyCount)
+    merchantBuying = true
+    shopBusy = true
+    notify("Auto Buy", "Teleporting to MerchantAU...", 2)
+    if not openMerchantAU() then
+        notify("Auto Buy", "MerchantAU NPC not found.", 4)
+        merchantBuying = false
+        shopBusy = false
+        return
+    end
+    local BuyItem = game:GetService("ReplicatedStorage").Events:FindFirstChild("BuyItem")
+    if not BuyItem then
+        notify("Auto Buy", "BuyItem remote not found!", 4)
+        merchantBuying = false
+        shopBusy = false
+        return
+    end
+    local itemName = MERCHANT_OPTION_ITEM[option] or "Rokakaka"
+    notify("Auto Buy", "Buying " .. count .. "x...", 2)
+    local fired = 0
+    local prevCount = getItemCount(itemName)
+    for i = 1, count do
+        pcall(function() BuyItem:FireServer("MerchantAU", option) end)
+        fired = fired + 1
+        if fired % 10 == 0 then
+            task.wait(0.1)
+            local newCount = getItemCount(itemName)
+            if newCount <= prevCount then
+                notify("Auto Buy", "Stopped — hit max or out of coins at " .. fired .. " fires.", 4)
+                merchantBuying = false
+                shopBusy = false
+                return
+            end
+            prevCount = newCount
+        end
+    end
+    pcall(function()
+        lp.PlayerGui.NpcDialouge.Frame.No.MouseButton1Click:Fire()
+    end)
+    merchantBuying = false
+    shopBusy = false
+    resetCharacter()
+    notify("Auto Buy", "Done! " .. fired .. " purchase(s) fired.", 4)
+end
+
+-- ── Auto Sell UI ─────────────────────────────────────────────────────────────
+
+AutoTab:AddParagraph({
+    Title   = "Auto Sell",
+    Content = "Automatically sells selected items on a timer. Pick one or more items below — each will be sold in sequence.",
+})
+
+AutoTab:AddDropdown("AutoSellItemsPick", {
+    Title   = "Items to Sell",
+    Icon    = "package",
+    Values  = SELLABLE_ITEMS,
+    Multi   = true,
+    Default = {},
+})
+
+Options.AutoSellItemsPick:OnChanged(function()
+    autoSellItems = {}
+    for k, v in pairs(Options.AutoSellItemsPick.Value) do
+        if v then table.insert(autoSellItems, k) end
+    end
+end)
+
+AutoTab:AddInput("AutoSellAmount", {
+    Title       = "Amount per Item",
+    Default     = "1",
+    Placeholder = "e.g. 10",
+    Numeric     = true,
+    Callback    = function(v)
+        autoSellAmount = tonumber(v) or 1
     end,
 })
+
+AutoTab:AddToggle("AutoSellAll", {
+    Title   = "Sell All (ignores amount)",
+    Icon    = "layers",
+    Default = false,
+})
+
+Options.AutoSellAll:OnChanged(function()
+    autoSellAllFlag = Options.AutoSellAll.Value
+end)
+
+AutoTab:AddInput("AutoSellInterval", {
+    Title       = "Sell Every (minutes)",
+    Default     = "10",
+    Placeholder = "e.g. 10",
+    Numeric     = true,
+    Callback    = function(v)
+        autoSellMinutes = tonumber(v) or 10
+    end,
+})
+
+AutoTab:AddToggle("AutoSell", {
+    Title   = "Enable Auto Sell",
+    Icon    = "repeat",
+    Default = false,
+})
+
+Options.AutoSell:OnChanged(function()
+    autoSellEnabled = Options.AutoSell.Value
+    if not autoSellEnabled then return end
+    task.spawn(function()
+        while autoSellEnabled do
+            local secs = math.max(1, autoSellMinutes) * 60
+            notify("Auto Sell", "Next sell in " .. autoSellMinutes .. " min.", 4)
+            task.wait(secs)
+            if not autoSellEnabled then break end
+            doAutoSell()
+        end
+    end)
+end)
+
+-- ── Auto Buy UI ───────────────────────────────────────────────────────────────
+
+AutoTab:AddParagraph({
+    Title   = "Auto Buy",
+    Content = "Automatically buys from MerchantAU on a timer.",
+})
+
+AutoTab:AddDropdown("AutoBuyItemPick", {
+    Title   = "Item to Buy",
+    Icon    = "shopping-bag",
+    Values  = MERCHANT_OPTION_LABELS,
+    Default = MERCHANT_OPTION_LABELS[1],
+})
+
+Options.AutoBuyItemPick:OnChanged(function()
+    autoBuyOption = MERCHANT_OPTIONS[Options.AutoBuyItemPick.Value] or "Option1"
+end)
+
+AutoTab:AddInput("AutoBuyCount", {
+    Title       = "Spam Count",
+    Default     = "50",
+    Placeholder = "e.g. 50",
+    Numeric     = true,
+    Callback    = function(v)
+        autoBuyCount = tonumber(v) or 50
+    end,
+})
+
+AutoTab:AddInput("AutoBuyInterval", {
+    Title       = "Buy Every (minutes)",
+    Default     = "10",
+    Placeholder = "e.g. 10",
+    Numeric     = true,
+    Callback    = function(v)
+        autoBuyMinutes = tonumber(v) or 10
+    end,
+})
+
+AutoTab:AddToggle("AutoBuy", {
+    Title   = "Enable Auto Buy",
+    Icon    = "repeat",
+    Default = false,
+})
+
+Options.AutoBuy:OnChanged(function()
+    autoBuyEnabled = Options.AutoBuy.Value
+    if not autoBuyEnabled then return end
+    task.spawn(function()
+        while autoBuyEnabled do
+            local secs = math.max(1, autoBuyMinutes) * 60
+            notify("Auto Buy", "Next buy in " .. autoBuyMinutes .. " min.", 4)
+            task.wait(secs)
+            if not autoBuyEnabled then break end
+            doAutoBuy()
+        end
+    end)
+end)
 
 -- ─── Config Tab ───────────────────────────────────────────────────────────────
 
@@ -1737,6 +2166,7 @@ task.spawn(function()
     RunService:UnbindFromRenderStep("SUR_CamLock")
     pcall(function() menuGui:Destroy() end)
     pcall(function() lp.PlayerGui.PlayerGUI.Enabled = true end)
+    pcall(function() game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true) end)
     cleanupMenu()
     checkAutoRestart()
 end)
