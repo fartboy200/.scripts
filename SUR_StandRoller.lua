@@ -87,6 +87,8 @@ local standDebug     = false
 local extendedAttri    = false  -- slow/safe attri wait (toggle); default = fast mode
 local customAttriDelay = 0.25  -- seconds; user-adjustable via input
 local useCustomDelay   = false -- when true, customAttriDelay overrides everything
+local specificExtraDelay   = true  -- extra attri wait for specific-list stands
+local specificExtraDelayMs = 500   -- ms; user-adjustable
 local specificStands = {}   -- {name=internalID, attribs={...}} — empty attribs = any attrib
 local blacklistStands = {}  -- {name=internalID, attribs={...}} — always Rokaka'd
 local pingUserId     = ""   -- Discord user ID for @mentions in alert webhooks
@@ -406,7 +408,9 @@ local function sendWebhook(stand, rolls)
     local itemName = Options.SelectItem.Value
     local roks  = getItemCount("Rokakaka")
     local items = getItemCount(itemName)
+    local ping = pingUserId ~= "" and ("<@" .. pingUserId .. "> ") or "@here "
     fireWebhook({
+        content  = ping,
         username = "SUR Stand Roller",
         embeds = {{
             title  = "Stand Found!",
@@ -426,9 +430,8 @@ local function sendWebhook(stand, rolls)
 end
 
 local function sendAlertWebhook(message)
-    local ping = pingUserId ~= "" and ("<@" .. pingUserId .. "> ") or "@here "
     fireWebhook({
-        content  = ping .. message,
+        content  = message,
         username = "SUR Stand Roller",
         embeds   = {{
             title  = "⚠️ Alert",
@@ -743,7 +746,17 @@ local function startRolling()
                     repeat task.wait(0.05) until standAppeared or isDead() or tick() > dl
                     sc:Disconnect()
                     if standAppeared then
-                        task.wait(settle)
+                        local totalSettle = settle
+                        if specificExtraDelay and #specificStands > 0 then
+                            local internalName = STAND_IDS[rolledStandName] or rolledStandName
+                            for _, entry in ipairs(specificStands) do
+                                if entry.name == internalName or entry.name == rolledStandName then
+                                    totalSettle = totalSettle + (specificExtraDelayMs / 1000)
+                                    break
+                                end
+                            end
+                        end
+                        task.wait(totalSettle)
                         rolledStandAttrib = av and tostring(av.Value) or "?"
                         local delayMs = tStand > 0 and math.floor((tick() - tStand) * 1000) or nil
                         sendStandDebugWebhook(delayMs)
@@ -1268,6 +1281,35 @@ SpecificTab:AddButton({
             end
         end)
         notify("Specific Stands", "Refreshed from file — " .. #specificStands .. " entries loaded.", 4)
+    end,
+})
+
+SpecificTab:AddParagraph({
+    Title   = "Extra Attri Delay",
+    Content = "When enabled, stands on your Specific list get extra wait time on top of the normal attri delay before the attribute is read. Useful if specific stands replicate slower for you.",
+})
+
+SpecificTab:AddToggle("SpecificExtraDelay", {
+    Title       = "Extra Delay for Specific Stands",
+    Description = "Adds extra ms wait when a specific-list stand is rolled",
+    Icon        = "clock",
+    Default     = true,
+})
+
+Options.SpecificExtraDelay:OnChanged(function()
+    specificExtraDelay = Options.SpecificExtraDelay.Value
+end)
+
+SpecificTab:AddInput("SpecificExtraDelayMs", {
+    Title       = "Extra Delay (ms)",
+    Default     = "500",
+    Placeholder = "500",
+    Numeric     = true,
+    Callback    = function(v)
+        local ms = tonumber(v)
+        if ms and ms >= 0 and ms <= 3000 then
+            specificExtraDelayMs = ms
+        end
     end,
 })
 
